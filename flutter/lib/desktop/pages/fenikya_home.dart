@@ -51,13 +51,28 @@ class _FenikyaHomeState extends State<FenikyaHome> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: Colors.white,
-      child: Column(children: [
-        _header(),
-        Expanded(child: _body()),
-        _footer(),
-      ]),
+    // Uygulama koyu temada olsa bile bu ekran DAIMA acik (light) tema kullanir;
+    // aksi halde text field'lar koyu dolgu alip yazilan gorunmez.
+    return Theme(
+      data: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: Colors.white,
+        colorScheme: ColorScheme.fromSeed(
+            seedColor: kBrand, brightness: Brightness.light),
+        inputDecorationTheme: const InputDecorationTheme(
+            filled: false, border: InputBorder.none),
+        textSelectionTheme: TextSelectionThemeData(
+            cursorColor: kBlue, selectionColor: kBlue.withOpacity(.25)),
+      ),
+      child: Container(
+        color: Colors.white,
+        child: Column(children: [
+          _header(),
+          Expanded(child: _body()),
+          _footer(),
+        ]),
+      ),
     );
   }
 
@@ -365,12 +380,17 @@ class _FenikyaHomeState extends State<FenikyaHome> {
                   keyboardType: TextInputType.visiblePassword,
                   autocorrect: false,
                   enableSuggestions: false,
+                  cursorColor: kBlue,
                   onSubmitted: (_) => _doConnect(),
                   style: const TextStyle(
                       color: kInk, fontSize: 16, fontWeight: FontWeight.w600),
                   decoration: const InputDecoration(
                       isCollapsed: true,
+                      filled: true,
+                      fillColor: Colors.transparent,
                       border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
                       hintText: '9 haneli ID',
                       hintStyle:
                           TextStyle(color: Color(0xFF9DB0C4), fontSize: 16)),
@@ -408,12 +428,17 @@ class _FenikyaHomeState extends State<FenikyaHome> {
                 child: TextField(
                   controller: _pwCtrl,
                   obscureText: _pwObscure,
+                  cursorColor: kBlue,
                   onSubmitted: (_) => _doConnect(),
                   style: const TextStyle(
                       color: kInk, fontSize: 14, fontWeight: FontWeight.w400),
                   decoration: const InputDecoration(
                       isCollapsed: true,
+                      filled: true,
+                      fillColor: Colors.transparent,
                       border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
                       hintText: 'Şifreyi biliyorsanız onaysız bağlanın',
                       hintStyle:
                           TextStyle(color: Color(0xFF9DB0C4), fontSize: 14)),
@@ -610,12 +635,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
           Padding(
             padding: const EdgeInsets.fromLTRB(22, 18, 22, 8),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              _row(Icons.key_rounded, 'Kalıcı erişim şifresi',
-                  onTap: () {
-                Navigator.pop(context);
-                setPasswordDialog();
-              }, trailing: const Icon(Icons.chevron_right_rounded, color: kMuted)),
-              _line(),
               _row(Icons.language_rounded, 'Dil',
                   trailing: Container(
                       padding: const EdgeInsets.symmetric(

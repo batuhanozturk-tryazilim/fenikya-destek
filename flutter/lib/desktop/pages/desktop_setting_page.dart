@@ -70,17 +70,15 @@ class DesktopSettingPage extends StatefulWidget {
         !bind.isDisableSettings() &&
         bind.mainGetBuildinOption(key: kOptionHideSecuritySetting) != 'Y')
       SettingsTabKey.safety,
-    if (!bind.isDisableSettings() &&
-        bind.mainGetBuildinOption(key: kOptionHideNetworkSetting) != 'Y')
-      SettingsTabKey.network,
+    // Fenikya: Ag (network) menusu kaldirildi - sunucu gomulu, ayar gerekmez.
     if (!bind.isIncomingOnly()) SettingsTabKey.display,
     if (!isWeb && !bind.isIncomingOnly() && bind.pluginFeatureIsEnabled())
       SettingsTabKey.plugin,
-    if (!bind.isDisableAccount()) SettingsTabKey.account,
+    // Fenikya: Hesap (account) menusu kaldirildi - RustDesk hesabi kullanilmaz.
     if (isWindows &&
         bind.mainGetBuildinOption(key: kOptionHideRemotePrinterSetting) != 'Y')
       SettingsTabKey.printer,
-    SettingsTabKey.about,
+    // Fenikya: Hakkinda (about) menusu kaldirildi.
   ];
 
   DesktopSettingPage({Key? key, required this.initialTabkey}) : super(key: key);

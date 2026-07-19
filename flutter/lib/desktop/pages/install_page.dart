@@ -11,6 +11,15 @@ import 'package:path/path.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:window_manager/window_manager.dart';
 
+// Fenikya marka renkleri (kurulum ekrani)
+const _kBrand = Color(0xFF0EA5B7);
+const _kBlue = Color(0xFF1D4ED8);
+const _kBlueD = Color(0xFF1E40AF);
+const _kInk = Color(0xFF0B2440);
+const _kInk2 = Color(0xFF31465E);
+const _kMuted = Color(0xFF7189A3);
+const _kLine = Color(0xFFE6EEF5);
+
 class InstallPage extends StatefulWidget {
   const InstallPage({Key? key}) : super(key: key);
 
@@ -103,151 +112,296 @@ class _InstallPageBodyState extends State<_InstallPageBody>
     windowManager.close();
   }
 
-  InkWell Option(RxBool option, {String label = ''}) {
+  Widget _opt(RxBool option, String label, IconData ic) {
     return InkWell(
-      // todo mouseCursor: "SystemMouseCursors.forbidden" or no cursor on btnEnabled == false
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(12),
       onTap: () => btnEnabled.value ? option.value = !option.value : null,
-      child: Row(
-        children: [
-          Obx(
-            () => Checkbox(
-              visualDensity: VisualDensity(horizontal: -4, vertical: -4),
-              value: option.value,
-              onChanged: (v) =>
-                  btnEnabled.value ? option.value = !option.value : null,
-            ).marginOnly(right: 8),
-          ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7FAFC),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _kLine, width: 1.4),
+        ),
+        child: Row(children: [
+          Icon(ic, size: 19, color: _kBrand),
+          const SizedBox(width: 12),
           Expanded(
-            child: Text(translate(label)),
-          ),
-        ],
+              child: Text(label,
+                  style: const TextStyle(
+                      color: _kInk, fontSize: 14, fontWeight: FontWeight.w600))),
+          Obx(() => AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                width: 44,
+                height: 26,
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                    gradient: option.value
+                        ? const LinearGradient(colors: [_kBrand, _kBlue])
+                        : null,
+                    color: option.value ? null : const Color(0xFFD8E2EC),
+                    borderRadius: BorderRadius.circular(999)),
+                alignment:
+                    option.value ? Alignment.centerRight : Alignment.centerLeft,
+                child: Container(
+                    width: 20,
+                    height: 20,
+                    decoration: const BoxDecoration(
+                        color: Colors.white, shape: BoxShape.circle)),
+              )),
+        ]),
       ),
+    );
+  }
+
+  Widget _hero() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(30, 26, 30, 26),
+      decoration:
+          const BoxDecoration(gradient: LinearGradient(colors: [_kBrand, _kBlue])),
+      child: Row(children: [
+        Container(
+            padding: const EdgeInsets.all(9),
+            decoration: BoxDecoration(
+                color: Colors.white, borderRadius: BorderRadius.circular(13)),
+            child: Image.asset('assets/fenikya_logo.png', width: 32, height: 32)),
+        const SizedBox(width: 14),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: const [
+          Text('Fenikya Destek',
+              style: TextStyle(
+                  color: Colors.white, fontWeight: FontWeight.w800, fontSize: 20)),
+          SizedBox(height: 2),
+          Text('Kurulum Sihirbazı',
+              style: TextStyle(color: Colors.white70, fontSize: 13)),
+        ]),
+      ]),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final double em = 13;
-    final isDarkTheme = MyTheme.currentThemeMode() == ThemeMode.dark;
-    return Scaffold(
-        backgroundColor: null,
+    return Theme(
+      data: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.light,
+        fontFamily: 'Segoe UI',
+        colorScheme:
+            ColorScheme.fromSeed(seedColor: _kBrand, brightness: Brightness.light),
+        scaffoldBackgroundColor: const Color(0xFFEFF5F9),
+      ),
+      child: Scaffold(
+        backgroundColor: const Color(0xFFEFF5F9),
         body: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(translate('Installation'),
-                  style: Theme.of(context).textTheme.headlineMedium),
-              Row(
-                children: [
-                  Text('${translate('Installation Path')}:')
-                      .marginOnly(right: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: controller,
-                      readOnly: true,
-                      decoration: InputDecoration(
-                        contentPadding: EdgeInsets.all(0.75 * em),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            _hero(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(28, 22, 28, 26),
+              child: Container(
+                padding: const EdgeInsets.all(26),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: _kLine),
+                  boxShadow: [
+                    BoxShadow(
+                        color: _kInk.withOpacity(.07),
+                        blurRadius: 30,
+                        offset: const Offset(0, 12))
+                  ],
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('Bilgisayarınıza kurun',
+                      style: TextStyle(
+                          fontSize: 20, fontWeight: FontWeight.w800, color: _kInk)),
+                  const SizedBox(height: 4),
+                  const Text(
+                      'Fenikya Destek\'i kurarak masaüstünden tek tıkla başlatabilirsiniz.',
+                      style: TextStyle(color: _kMuted, fontSize: 13.5)),
+                  const SizedBox(height: 20),
+                  const Text('Kurulum Konumu',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: _kInk2)),
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    Expanded(
+                      child: Container(
+                        height: 44,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(
+                            color: const Color(0xFFF7FAFC),
+                            borderRadius: BorderRadius.circular(11),
+                            border: Border.all(color: _kLine, width: 1.4)),
+                        child: Row(children: [
+                          const Icon(Icons.folder_rounded,
+                              size: 17, color: Color(0xFF93A6BA)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: controller,
+                              readOnly: true,
+                              style: const TextStyle(color: _kInk, fontSize: 13),
+                              decoration: const InputDecoration(
+                                  isCollapsed: true,
+                                  filled: true,
+                                  fillColor: Colors.transparent,
+                                  border: InputBorder.none),
+                            ).workaroundFreezeLinuxMint(),
+                          ),
+                        ]),
                       ),
-                    ).workaroundFreezeLinuxMint().marginOnly(right: 10),
-                  ),
-                  Obx(
-                    () => OutlinedButton.icon(
-                      icon: Icon(Icons.folder_outlined, size: 16),
-                      onPressed: btnEnabled.value ? selectInstallPath : null,
-                      style: buttonStyle,
-                      label: Text(translate('Change Path')),
                     ),
-                  )
-                ],
-              ).marginSymmetric(vertical: 2 * em),
-              Option(startmenu, label: 'Create start menu shortcuts')
-                  .marginOnly(bottom: 7),
-              Option(desktopicon, label: 'Create desktop icon')
-                  .marginOnly(bottom: 7),
-              Option(printer, label: 'Install {$appName} Printer'),
-              Container(
-                  padding: EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: isDarkTheme
-                        ? Color.fromARGB(135, 87, 87, 90)
-                        : Colors.grey[100],
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey),
+                    const SizedBox(width: 10),
+                    Obx(() => InkWell(
+                          borderRadius: BorderRadius.circular(11),
+                          onTap: btnEnabled.value ? selectInstallPath : null,
+                          child: Container(
+                            height: 44,
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                                color: const Color(0xFFEEF4F8),
+                                borderRadius: BorderRadius.circular(11)),
+                            child: const Text('Değiştir',
+                                style: TextStyle(
+                                    color: _kInk2,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13)),
+                          ),
+                        )),
+                  ]),
+                  const SizedBox(height: 20),
+                  _opt(startmenu, 'Başlat menüsü kısayolu oluştur',
+                      Icons.push_pin_outlined),
+                  _opt(desktopicon, 'Masaüstü simgesi oluştur',
+                      Icons.desktop_windows_outlined),
+                  _opt(printer, 'Fenikya Destek Yazıcısını kur',
+                      Icons.print_outlined),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFFF0F7FB),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFDCEAF2))),
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Icon(Icons.shield_rounded, size: 22, color: _kBrand),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                  'Kurmaya devam ederek uçtan uca şifreli, güvenli uzak destek koşullarını kabul etmiş olursunuz.',
+                                  style: TextStyle(
+                                      color: _kInk2, fontSize: 12.8, height: 1.45)),
+                              const SizedBox(height: 8),
+                              InkWell(
+                                onTap: () => launchUrlString(
+                                    'https://destek.fenikya.com.tr/gizlilik'),
+                                child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                                  Icon(Icons.launch_rounded, size: 14, color: _kBlue),
+                                  SizedBox(width: 6),
+                                  Text('Gizlilik ve Kullanım Koşulları',
+                                      style: TextStyle(
+                                          color: _kBlue,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 12.8,
+                                          decoration: TextDecoration.underline,
+                                          decorationColor: _kBlue)),
+                                ]),
+                              ),
+                            ]),
+                      ),
+                    ]),
                   ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.info_outline_rounded, size: 32)
-                          .marginOnly(right: 16),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(translate('agreement_tip'))
-                              .marginOnly(bottom: em),
-                          InkWell(
-                            hoverColor: Colors.transparent,
-                            onTap: () => launchUrlString(
-                                'https://rustdesk.com/privacy.html'),
-                            child: Tooltip(
-                              message: 'https://rustdesk.com/privacy.html',
-                              child: Row(children: [
-                                Icon(Icons.launch_outlined, size: 16)
-                                    .marginOnly(right: 5),
-                                Text(
-                                  translate('End-user license agreement'),
-                                  style: const TextStyle(
-                                      decoration: TextDecoration.underline),
-                                )
+                  const SizedBox(height: 18),
+                  Obx(() => showProgress.value
+                      ? const Padding(
+                          padding: EdgeInsets.only(bottom: 14),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.all(Radius.circular(8)),
+                            child: LinearProgressIndicator(
+                                minHeight: 6, color: _kBrand),
+                          ),
+                        )
+                      : const SizedBox.shrink()),
+                  Row(children: [
+                    Offstage(
+                      offstage: bind.installShowRunWithoutInstall(),
+                      child: Obx(() => InkWell(
+                            onTap: btnEnabled.value
+                                ? () => bind.installRunWithoutInstall()
+                                : null,
+                            child: const Text('Kurmadan çalıştır',
+                                style: TextStyle(
+                                    color: _kMuted,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                    decoration: TextDecoration.underline)),
+                          )),
+                    ),
+                    const Spacer(),
+                    Obx(() => InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap:
+                              btnEnabled.value ? () => windowManager.close() : null,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 20, vertical: 13),
+                            decoration: BoxDecoration(
+                                color: const Color(0xFFEEF4F8),
+                                borderRadius: BorderRadius.circular(12)),
+                            child: const Text('İptal',
+                                style: TextStyle(
+                                    color: _kInk2,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14)),
+                          ),
+                        )),
+                    const SizedBox(width: 12),
+                    Obx(() => Opacity(
+                          opacity: btnEnabled.value ? 1 : .6,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: btnEnabled.value ? install : null,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 26, vertical: 13),
+                              decoration: BoxDecoration(
+                                  gradient: const LinearGradient(
+                                      colors: [_kBrand, _kBlue]),
+                                  borderRadius: BorderRadius.circular(12),
+                                  boxShadow: [
+                                    BoxShadow(
+                                        color: _kBlue.withOpacity(.32),
+                                        blurRadius: 18,
+                                        offset: const Offset(0, 7))
+                                  ]),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                                Icon(Icons.download_rounded,
+                                    color: Colors.white, size: 18),
+                                SizedBox(width: 8),
+                                Text('Kabul Et ve Kur',
+                                    style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14.5)),
                               ]),
                             ),
                           ),
-                        ],
-                      )
-                    ],
-                  )).marginSymmetric(vertical: 2 * em),
-              Row(
-                children: [
-                  Expanded(
-                    // NOT use Offstage to wrap LinearProgressIndicator
-                    child: Obx(() => showProgress.value
-                        ? LinearProgressIndicator().marginOnly(right: 10)
-                        : Offstage()),
-                  ),
-                  Obx(
-                    () => OutlinedButton.icon(
-                      icon: Icon(Icons.close_rounded, size: 16),
-                      label: Text(translate('Cancel')),
-                      onPressed:
-                          btnEnabled.value ? () => windowManager.close() : null,
-                      style: buttonStyle,
-                    ).marginOnly(right: 10),
-                  ),
-                  Obx(
-                    () => ElevatedButton.icon(
-                      icon: Icon(Icons.done_rounded, size: 16),
-                      label: Text(translate('Accept and Install')),
-                      onPressed: btnEnabled.value ? install : null,
-                      style: buttonStyle,
-                    ),
-                  ),
-                  Offstage(
-                    offstage: bind.installShowRunWithoutInstall(),
-                    child: Obx(
-                      () => OutlinedButton.icon(
-                        icon: Icon(Icons.screen_share_outlined, size: 16),
-                        label: Text(translate('Run without install')),
-                        onPressed: btnEnabled.value
-                            ? () => bind.installRunWithoutInstall()
-                            : null,
-                        style: buttonStyle,
-                      ).marginOnly(left: 10),
-                    ),
-                  ),
-                ],
-              )
-            ],
-          ).paddingSymmetric(horizontal: 4 * em, vertical: 3 * em),
-        ));
+                        )),
+                  ]),
+                ]),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   void install() {
