@@ -250,7 +250,8 @@ jobs:
           f=libs/hbb_common/src/config.rs
           sed -i 's#rs-ny\.rustdesk\.com#relay.fenikya.com.tr#g' "$f"
           sed -i 's#OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=#1nTWdcpv9aBtDp8SUeOM+0P07GI9TBCNWslUrwGiqK0=#g' "$f"
-          echo "BAKED:"; grep -nE 'RENDEZVOUS_SERVERS|RS_PUB_KEY:' "$f" | head
+          sed -i 's#RwLock::new("RustDesk".to_owned())#RwLock::new("FenikyaDestek".to_owned())#' "$f"
+          echo "BAKED:"; grep -nE 'RENDEZVOUS_SERVERS|RS_PUB_KEY:|APP_NAME' "$f" | head
 
       - name: Build rustdesk
         run: |
@@ -315,6 +316,16 @@ jobs:
         with:
           name: ${{ matrix.job.arch == 'aarch64' && 'topmostwindow-artifacts-ARM64' || 'topmostwindow-artifacts-x64' }}
           path: "./rustdesk"
+
+      - name: Rename exe to Fenikya Destek
+        shell: bash
+        run: |
+          if [ -f "rustdesk/rustdesk.exe" ]; then
+            mv "rustdesk/rustdesk.exe" "rustdesk/Fenikya Destek.exe"
+            echo "renamed:"; ls -la rustdesk/*.exe
+          else
+            echo "rustdesk.exe bulunamadi, klasor:"; ls -la rustdesk | head
+          fi
 
       - name: Upload unsigned
         if: env.UPLOAD_ARTIFACT == 'true'
