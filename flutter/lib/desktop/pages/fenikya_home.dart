@@ -8,8 +8,10 @@ import 'package:provider/provider.dart';
 
 import '../../common.dart' hide Dialog;
 import '../../common/formatter/id_formatter.dart';
+import '../../models/platform_model.dart';
 import '../../models/server_model.dart';
 import 'desktop_home_page.dart' show setPasswordDialog;
+import 'fenikya_auth.dart';
 
 // ---- Fenikya marka renkleri ----
 const kBrand = Color(0xFF0EA5B7);
@@ -34,6 +36,26 @@ class _FenikyaHomeState extends State<FenikyaHome> {
   final _pwCtrl = TextEditingController();
   bool _pwObscure = true;
 
+  // Zorunlu giris kapisi: token yoksa auth ekrani gosterilir.
+  String? _token;
+
+  @override
+  void initState() {
+    super.initState();
+    final t = bind.mainGetLocalOption(key: 'fenikya-token');
+    _token = t.isEmpty ? null : t;
+  }
+
+  Future<void> _onAuthed(String token) async {
+    await bind.mainSetLocalOption(key: 'fenikya-token', value: token);
+    if (mounted) setState(() => _token = token);
+  }
+
+  Future<void> _logout() async {
+    await bind.mainSetLocalOption(key: 'fenikya-token', value: '');
+    if (mounted) setState(() => _token = null);
+  }
+
   @override
   void dispose() {
     _idCtrl.dispose();
@@ -44,6 +66,12 @@ class _FenikyaHomeState extends State<FenikyaHome> {
   void _doConnect() {
     final id = _idCtrl.id.trim();
     if (id.isEmpty) return;
+    // Kendi cihazina baglanmayi engelle (aynali baglanti anlamsiz).
+    final myId = gFFI.serverModel.serverId.text.replaceAll(RegExp(r'\s'), '');
+    if (id == myId && myId.isNotEmpty) {
+      showToast('Kendi cihazınıza bağlanamazsınız.');
+      return;
+    }
     final pw = _pwCtrl.text.trim();
     connect(context, id,
         password: pw.isEmpty ? null : pw, isSharedPassword: false);
@@ -51,6 +79,10 @@ class _FenikyaHomeState extends State<FenikyaHome> {
 
   @override
   Widget build(BuildContext context) {
+    // ZORUNLU GIRIS: token yoksa once giris/kayit ekrani.
+    if (_token == null) {
+      return FenikyaAuthScreen(onAuthed: _onAuthed);
+    }
     // Uygulama koyu temada olsa bile bu ekran DAIMA acik (light) tema kullanir;
     // aksi halde text field'lar koyu dolgu alip yazilan gorunmez.
     return Theme(
@@ -132,7 +164,7 @@ class _FenikyaHomeState extends State<FenikyaHome> {
             onTap: () => showDialog(
                 context: context,
                 barrierColor: kInk.withOpacity(.32),
-                builder: (_) => const _SettingsDialog()),
+                builder: (_) => _SettingsDialog(onLogout: _logout)),
             child: Container(
                 width: 40,
                 height: 40,
@@ -581,7 +613,8 @@ Widget _glass(double maxW, double radius, Widget child) => Container(
 
 // ---------------- AYARLAR / HAKKIMIZDA DIALOG ----------------
 class _SettingsDialog extends StatefulWidget {
-  const _SettingsDialog();
+  final VoidCallback? onLogout;
+  const _SettingsDialog({this.onLogout});
   @override
   State<_SettingsDialog> createState() => _SettingsDialogState();
 }
@@ -647,6 +680,14 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                               color: kInk2,
                               fontWeight: FontWeight.w700,
                               fontSize: 13)))),
+              _line(),
+              _row(Icons.logout_rounded, 'Çıkış Yap',
+                  onTap: () {
+                    Navigator.pop(context);
+                    widget.onLogout?.call();
+                  },
+                  trailing: const Icon(Icons.chevron_right_rounded,
+                      color: kMuted)),
             ]),
           ),
           Container(
