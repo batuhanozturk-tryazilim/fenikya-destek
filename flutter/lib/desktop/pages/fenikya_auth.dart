@@ -20,47 +20,112 @@ const _kMuted = Color(0xFF7189A3);
 const _kLine = Color(0xFFE6EEF5);
 
 // ==================== API ====================
+class AuthOutcome {
+  final String? token; // dolu ise giris tamam
+  final String? verifyEmail; // dolu ise once e-posta dogrulama gerekli
+  const AuthOutcome({this.token, this.verifyEmail});
+}
+
 class FenikyaAuthApi {
-  static Future<Map<String, dynamic>> _post(String path, Map body) async {
+  static Map<String, dynamic> _json(String body) {
+    try {
+      final v = jsonDecode(body);
+      return v is Map<String, dynamic> ? v : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  // (statusCode, jsonBody) doner; ag hatasinda firlatir.
+  static Future<(int, Map<String, dynamic>)> _post(String path, Map body,
+      {String? token}) async {
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    };
+    if (token != null) headers['Authorization'] = 'Bearer $token';
     late http.Response r;
     try {
       r = await http
           .post(Uri.parse('$kFenikyaBase$path'),
-              headers: const {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-              },
-              body: jsonEncode(body))
+              headers: headers, body: jsonEncode(body))
           .timeout(const Duration(seconds: 20));
     } catch (_) {
       throw 'Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edin.';
     }
-    Map<String, dynamic> j;
-    try {
-      j = jsonDecode(r.body) as Map<String, dynamic>;
-    } catch (_) {
-      throw 'Sunucu beklenmeyen bir yanıt döndü.';
-    }
-    if ((r.statusCode == 200 || r.statusCode == 201) && j['success'] == true) {
-      return (j['data'] as Map<String, dynamic>?) ?? {};
-    }
-    throw (j['message'] ?? 'İşlem başarısız.').toString();
+    return (r.statusCode, _json(r.body));
   }
 
-  static Future<String> login(String email, String pw) async {
-    final d = await _post('/api/auth/login', {'email': email, 'password': pw});
-    return (d['token'] ?? '').toString();
+  static Future<(int, Map<String, dynamic>)> _get(String path,
+      {String? token}) async {
+    final headers = <String, String>{'Accept': 'application/json'};
+    if (token != null) headers['Authorization'] = 'Bearer $token';
+    final r = await http
+        .get(Uri.parse('$kFenikyaBase$path'), headers: headers)
+        .timeout(const Duration(seconds: 20));
+    return (r.statusCode, _json(r.body));
   }
 
-  static Future<String> register(
+  static Future<AuthOutcome> login(String email, String pw) async {
+    final (st, j) =
+        await _post('/api/auth/login', {'email': email, 'password': pw});
+    if (st == 200 && j['success'] == true) {
+      return AuthOutcome(token: (j['data']?['token'] ?? '').toString());
+    }
+    if (j['needs_verification'] == true) {
+      return AuthOutcome(verifyEmail: (j['email'] ?? email).toString());
+    }
+    throw (j['message'] ?? 'Giriş başarısız.').toString();
+  }
+
+  static Future<AuthOutcome> register(
       String name, String email, String phone, String pw) async {
-    final d = await _post('/api/auth/register',
+    final (st, j) = await _post('/api/auth/register',
         {'name': name, 'email': email, 'phone': phone, 'password': pw});
-    return (d['token'] ?? '').toString();
+    if (st == 200 && j['success'] == true) {
+      final data = (j['data'] as Map?) ?? {};
+      if (data['needs_verification'] == true) {
+        return AuthOutcome(verifyEmail: (data['email'] ?? email).toString());
+      }
+      return AuthOutcome(token: (data['token'] ?? '').toString());
+    }
+    throw (j['message'] ?? 'Kayıt başarısız.').toString();
   }
 
   static Future<void> forgot(String email) async {
     await _post('/api/auth/forgot', {'email': email});
+  }
+
+  static Future<void> resendVerification(String email) async {
+    await _post('/api/auth/resend-verification', {'email': email});
+  }
+
+  // ---- oturum sonrasi yardimcilar (hata olursa sessizce yut) ----
+  static Future<Map<String, dynamic>?> me(String token) async {
+    try {
+      final (st, j) = await _get('/api/auth/me', token: token);
+      if (st == 200 && j['success'] == true) {
+        return (j['data']?['user'] as Map<String, dynamic>?);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<Map<String, dynamic>?> appVersion() async {
+    try {
+      final (st, j) = await _get('/api/version');
+      if (st == 200 && j['success'] == true) {
+        return (j['data'] as Map<String, dynamic>?);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static Future<void> heartbeat(
+      String token, Map<String, dynamic> device) async {
+    try {
+      await _post('/api/devices/heartbeat', device, token: token);
+    } catch (_) {}
   }
 }
 
@@ -73,10 +138,11 @@ class FenikyaAuthScreen extends StatefulWidget {
 }
 
 class _FenikyaAuthScreenState extends State<FenikyaAuthScreen> {
-  String mode = 'login'; // login | register | forgot
+  String mode = 'login'; // login | register | forgot | verify
   bool loading = false;
   String? error;
   String? info;
+  String? _pendingEmail; // dogrulama bekleyen e-posta
 
   final nameC = TextEditingController();
   final emailC = TextEditingController();
@@ -126,8 +192,13 @@ class _FenikyaAuthScreenState extends State<FenikyaAuthScreen> {
         final email = emailC.text.trim();
         final pw = pwC.text;
         if (email.isEmpty || pw.isEmpty) throw 'E-posta ve şifre gerekli.';
-        final token = await FenikyaAuthApi.login(email, pw);
-        widget.onAuthed(token);
+        final res = await FenikyaAuthApi.login(email, pw);
+        if (res.verifyEmail != null) {
+          _pendingEmail = res.verifyEmail;
+          _go('verify');
+          return;
+        }
+        widget.onAuthed(res.token ?? '');
       });
 
   void _submitRegister() => _run(() async {
@@ -142,8 +213,21 @@ class _FenikyaAuthScreenState extends State<FenikyaAuthScreen> {
         }
         if (pw.length < 6) throw 'Şifre en az 6 karakter olmalı.';
         if (!kvkk) throw 'Devam etmek için KVKK ve Gizlilik metnini onaylayın.';
-        final token = await FenikyaAuthApi.register(name, email, phone, pw);
-        widget.onAuthed(token);
+        final res = await FenikyaAuthApi.register(name, email, phone, pw);
+        if (res.verifyEmail != null) {
+          _pendingEmail = res.verifyEmail;
+          _go('verify');
+          return;
+        }
+        widget.onAuthed(res.token ?? '');
+      });
+
+  void _resend() => _run(() async {
+        final email = _pendingEmail ?? emailC.text.trim();
+        if (email.isEmpty) throw 'E-posta bulunamadı.';
+        await FenikyaAuthApi.resendVerification(email);
+        setState(() => info =
+            'Doğrulama bağlantısı $email adresine tekrar gönderildi.');
       });
 
   void _submitForgot() => _run(() async {
@@ -280,7 +364,11 @@ class _FenikyaAuthScreenState extends State<FenikyaAuthScreen> {
                   key: ValueKey(mode),
                   child: mode == 'register'
                       ? _registerForm()
-                      : (mode == 'forgot' ? _forgotForm() : _loginForm()),
+                      : mode == 'forgot'
+                          ? _forgotForm()
+                          : mode == 'verify'
+                              ? _verifyForm()
+                              : _loginForm(),
                 ),
               ),
             ),
@@ -483,6 +571,69 @@ class _FenikyaAuthScreenState extends State<FenikyaAuthScreen> {
               _submitForgot),
           const SizedBox(height: 22),
           _switchRow('Şifrenizi hatırladınız mı?', 'Giriş yapın', () => _go('login')),
+        ]);
+  }
+
+  Widget _verifyForm() {
+    final email = _pendingEmail ?? '';
+    return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () => _go('login'),
+                child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                  Icon(Icons.arrow_back_rounded, size: 16, color: _kMuted),
+                  SizedBox(width: 6),
+                  Text('Giriş\'e dön',
+                      style: TextStyle(
+                          color: _kMuted,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700)),
+                ]),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(15),
+                  gradient: const LinearGradient(
+                      colors: [Color(0xFFE7F7FA), Color(0xFFDFEEFC)])),
+              child: const Icon(Icons.mark_email_unread_rounded,
+                  color: _kBrand, size: 26),
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text('E-postanızı doğrulayın',
+              style: TextStyle(
+                  fontSize: 24, fontWeight: FontWeight.w800, color: _kInk)),
+          const SizedBox(height: 6),
+          Text.rich(TextSpan(
+              style: const TextStyle(color: _kMuted, fontSize: 14, height: 1.5),
+              children: [
+                const TextSpan(text: 'Doğrulama bağlantısını '),
+                TextSpan(
+                    text: email,
+                    style: const TextStyle(
+                        color: _kInk, fontWeight: FontWeight.w700)),
+                const TextSpan(
+                    text:
+                        ' adresine gönderdik. Giriş yapabilmek için e-postanızdaki bağlantıya tıklayın.'),
+              ])),
+          const SizedBox(height: 20),
+          _banner(),
+          _SubmitButton('Tekrar Gönder', Icons.send_rounded, loading, _resend),
+          const SizedBox(height: 22),
+          _switchRow('Doğruladınız mı?', 'Giriş yapın', () => _go('login')),
         ]);
   }
 

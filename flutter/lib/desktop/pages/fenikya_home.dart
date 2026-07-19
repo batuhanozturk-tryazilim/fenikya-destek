@@ -2,9 +2,13 @@
 // RustDesk motoru uzerine giydirilmis ozel arayuz. Gercek ID + baglan mantigi
 // gFFI.serverModel + connect() uzerinden baglanir.
 
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../common.dart' hide Dialog;
 import '../../common/formatter/id_formatter.dart';
@@ -38,26 +42,92 @@ class _FenikyaHomeState extends State<FenikyaHome> {
 
   // Zorunlu giris kapisi: token yoksa auth ekrani gosterilir.
   String? _token;
+  Map<String, dynamic>? _user; // giris yapan kullanici
+  Map<String, dynamic>? _update; // yeni surum bilgisi (varsa)
+  bool _updateDismissed = false;
+  Timer? _hbTimer;
 
   @override
   void initState() {
     super.initState();
     final t = bind.mainGetLocalOption(key: 'fenikya-token');
     _token = t.isEmpty ? null : t;
+    if (_token != null) _afterAuth();
+    _checkUpdate();
+  }
+
+  void _afterAuth() {
+    final token = _token;
+    if (token == null) return;
+    FenikyaAuthApi.me(token).then((u) {
+      if (mounted && u != null) setState(() => _user = u);
+    });
+    _sendHeartbeat();
+    _hbTimer?.cancel();
+    _hbTimer =
+        Timer.periodic(const Duration(seconds: 90), (_) => _sendHeartbeat());
+  }
+
+  void _sendHeartbeat() {
+    final token = _token;
+    if (token == null) return;
+    final id = gFFI.serverModel.serverId.text.replaceAll(RegExp(r'\s'), '');
+    if (id.length < 6) return; // gecerli ID olusana kadar bekle
+    FenikyaAuthApi.heartbeat(token, {
+      'rustdesk_id': id,
+      'device_name': Platform.localHostname,
+      'os': 'Windows ${Platform.operatingSystemVersion}',
+      'app_version': version,
+    });
+  }
+
+  void _checkUpdate() {
+    FenikyaAuthApi.appVersion().then((v) {
+      if (!mounted || v == null) return;
+      final latest = (v['latest'] ?? '').toString();
+      if (_isNewer(latest, version)) setState(() => _update = v);
+    });
+  }
+
+  bool _isNewer(String a, String b) {
+    List<int> parse(String s) => s
+        .split('.')
+        .map((x) => int.tryParse(x.replaceAll(RegExp(r'\D'), '')) ?? 0)
+        .toList();
+    final pa = parse(a), pb = parse(b);
+    for (var i = 0; i < 3; i++) {
+      final x = i < pa.length ? pa[i] : 0;
+      final y = i < pb.length ? pb[i] : 0;
+      if (x != y) return x > y;
+    }
+    return false;
+  }
+
+  void _openUpdate() {
+    final url = (_update?['url'] ?? '').toString();
+    if (url.isNotEmpty) launchUrlString(url);
   }
 
   Future<void> _onAuthed(String token) async {
     await bind.mainSetLocalOption(key: 'fenikya-token', value: token);
     if (mounted) setState(() => _token = token);
+    _afterAuth();
   }
 
   Future<void> _logout() async {
+    _hbTimer?.cancel();
     await bind.mainSetLocalOption(key: 'fenikya-token', value: '');
-    if (mounted) setState(() => _token = null);
+    if (mounted) {
+      setState(() {
+        _token = null;
+        _user = null;
+      });
+    }
   }
 
   @override
   void dispose() {
+    _hbTimer?.cancel();
     _idCtrl.dispose();
     _pwCtrl.dispose();
     super.dispose();
@@ -99,11 +169,122 @@ class _FenikyaHomeState extends State<FenikyaHome> {
       ),
       child: Container(
         color: Colors.white,
-        child: Column(children: [
-          _header(),
-          Expanded(child: _body()),
-          _footer(),
-        ]),
+        child: (_update != null && _update!['mandatory'] == true)
+            ? _mandatoryUpdate()
+            : Column(children: [
+                _header(),
+                if (_update != null && !_updateDismissed) _updateBanner(),
+                Expanded(child: _body()),
+                _footer(),
+              ]),
+      ),
+    );
+  }
+
+  // opsiyonel guncelleme cubugu (kapatilabilir)
+  Widget _updateBanner() {
+    final v = (_update?['latest'] ?? '').toString();
+    return Container(
+      color: const Color(0xFFEFF6FF),
+      padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 10),
+      child: Row(children: [
+        const Icon(Icons.system_update_rounded, size: 18, color: kBlue),
+        const SizedBox(width: 10),
+        Expanded(
+            child: Text('Yeni sürüm mevcut ($v). Daha iyi bir deneyim için güncelleyin.',
+                style: const TextStyle(
+                    color: kInk2, fontSize: 13, fontWeight: FontWeight.w600))),
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(9),
+            onTap: _openUpdate,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: [kBrand, kBlue]),
+                  borderRadius: BorderRadius.circular(9)),
+              child: const Text('İndir',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13)),
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        IconButton(
+          icon: const Icon(Icons.close_rounded, size: 18, color: kMuted),
+          onPressed: () => setState(() => _updateDismissed = true),
+          splashRadius: 18,
+        ),
+      ]),
+    );
+  }
+
+  // zorunlu guncelleme: uygulamayi kullanima kapatir
+  Widget _mandatoryUpdate() {
+    final v = (_update?['latest'] ?? '').toString();
+    final notes = (_update?['notes'] ?? '').toString();
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(18),
+                    gradient: const LinearGradient(
+                        colors: [Color(0xFFE7F7FA), Color(0xFFDFEEFC)])),
+                child: const Icon(Icons.system_update_rounded,
+                    color: kBrand, size: 32)),
+            const SizedBox(height: 18),
+            Text('Güncelleme gerekli${v.isNotEmpty ? '  ($v)' : ''}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 21, fontWeight: FontWeight.w800, color: kInk)),
+            const SizedBox(height: 8),
+            Text(
+                notes.isNotEmpty
+                    ? notes
+                    : 'Devam edebilmek için Fenikya Destek\'in yeni sürümünü indirip kurmanız gerekiyor.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: kMuted, fontSize: 14, height: 1.5)),
+            const SizedBox(height: 24),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(13),
+                onTap: _openUpdate,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 30, vertical: 15),
+                  decoration: BoxDecoration(
+                      gradient: const LinearGradient(colors: [kBrand, kBlue]),
+                      borderRadius: BorderRadius.circular(13),
+                      boxShadow: [
+                        BoxShadow(
+                            color: kBlue.withOpacity(.32),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8))
+                      ]),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: const [
+                    Icon(Icons.download_rounded, color: Colors.white, size: 19),
+                    SizedBox(width: 9),
+                    Text('İndir ve Kur',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15)),
+                  ]),
+                ),
+              ),
+            ),
+          ]),
+        ),
       ),
     );
   }
@@ -164,7 +345,7 @@ class _FenikyaHomeState extends State<FenikyaHome> {
             onTap: () => showDialog(
                 context: context,
                 barrierColor: kInk.withOpacity(.32),
-                builder: (_) => _SettingsDialog(onLogout: _logout)),
+                builder: (_) => _SettingsDialog(onLogout: _logout, user: _user)),
             child: Container(
                 width: 40,
                 height: 40,
@@ -561,7 +742,7 @@ class _FenikyaHomeState extends State<FenikyaHome> {
               style: TextStyle(
                   color: kMuted, fontWeight: FontWeight.w600, fontSize: 12))
         ])),
-        const Text('✦  Güvenli. Hızlı. Kolay.  ✦',
+        const Text('✦  fenikya.com ile hazırlanmıştır  ✦',
             style: TextStyle(
                 color: kInk, fontWeight: FontWeight.w800, fontSize: 12)),
         Expanded(
@@ -614,7 +795,8 @@ Widget _glass(double maxW, double radius, Widget child) => Container(
 // ---------------- AYARLAR / HAKKIMIZDA DIALOG ----------------
 class _SettingsDialog extends StatefulWidget {
   final VoidCallback? onLogout;
-  const _SettingsDialog({this.onLogout});
+  final Map<String, dynamic>? user;
+  const _SettingsDialog({this.onLogout, this.user});
   @override
   State<_SettingsDialog> createState() => _SettingsDialogState();
 }
@@ -665,6 +847,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               ),
             ]),
           ),
+          if (widget.user != null) _userCard(),
           Padding(
             padding: const EdgeInsets.fromLTRB(22, 18, 22, 8),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -774,4 +957,47 @@ class _SettingsDialogState extends State<_SettingsDialog> {
         ),
       );
   Widget _line() => Container(height: 1, color: kLine);
+
+  Widget _userCard() {
+    final name = (widget.user?['name'] ?? '').toString().trim();
+    final email = (widget.user?['email'] ?? '').toString();
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+    final greet = name.isEmpty ? 'Merhaba' : 'Merhaba, ${name.split(' ').first}';
+    return Container(
+      margin: const EdgeInsets.fromLTRB(22, 18, 22, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+          color: const Color(0xFFF6FAFC),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kLine)),
+      child: Row(children: [
+        Container(
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+              gradient: const LinearGradient(colors: [kBrand, kBlue]),
+              borderRadius: BorderRadius.circular(12)),
+          child: Text(initial,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 18)),
+        ),
+        const SizedBox(width: 13),
+        Expanded(
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(greet,
+                style: const TextStyle(
+                    color: kInk, fontWeight: FontWeight.w800, fontSize: 14.5)),
+            const SizedBox(height: 2),
+            Text(email,
+                style: const TextStyle(color: kMuted, fontSize: 12.5),
+                overflow: TextOverflow.ellipsis),
+          ]),
+        ),
+      ]),
+    );
+  }
 }
