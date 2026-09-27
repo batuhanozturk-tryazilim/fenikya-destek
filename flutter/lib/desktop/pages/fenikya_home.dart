@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -12,6 +13,7 @@ import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../common.dart' hide Dialog;
 import '../../common/formatter/id_formatter.dart';
+import '../../consts.dart';
 import '../../models/platform_model.dart';
 import '../../models/server_model.dart';
 import 'desktop_home_page.dart' show setPasswordDialog;
@@ -40,50 +42,160 @@ class _FenikyaHomeState extends State<FenikyaHome> {
   final _pwCtrl = TextEditingController();
   bool _pwObscure = true;
 
-  // Zorunlu giris kapisi: token yoksa auth ekrani gosterilir.
+  // Giris kapisi: panelde giris zorunluysa ve token yoksa auth ekrani gosterilir.
   String? _token;
+  // Son bilinen panel ayari (acilista cevrimdisi karar icin yerelde saklanir).
+  bool _loginRequired =
+      bind.mainGetLocalOption(key: 'fenikya-login-required') != '0';
   Map<String, dynamic>? _user; // giris yapan kullanici
   Map<String, dynamic>? _update; // yeni surum bilgisi (varsa)
   bool _updateDismissed = false;
   Timer? _hbTimer;
+  bool _accessSynced = false; // kalici erisim durumu bu oturumda panele bildirildi mi
+
+  // Kalici (onaysiz) erisim: '' = henuz sorulmadi, 'Y' = izin verdi, 'N' = vermedi
+  static const _kUnattended = 'fenikya-unattended';
+  static const _kAccessPw = 'fenikya-access-pw';
 
   @override
   void initState() {
     super.initState();
     final t = bind.mainGetLocalOption(key: 'fenikya-token');
     _token = t.isEmpty ? null : t;
-    if (_token != null) _afterAuth();
+    if (_token != null || !_loginRequired) _afterAuth();
     _checkUpdate();
+    _registerAutostart();
   }
+
+  // Windows acilisinda uygulamayi baslat (her acilista kaydi tazeler; exe yeri degismis olabilir).
+  void _registerAutostart() {
+    if (!Platform.isWindows) return;
+    final exe = Platform.resolvedExecutable;
+    final temp = (Platform.environment['TEMP'] ?? '').toLowerCase();
+    // self-extract kurulum gecici klasorden calisir; oradaki yolu kaydetme
+    if (temp.isNotEmpty && exe.toLowerCase().startsWith(temp)) return;
+    Process.run('reg', [
+      'add',
+      r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run',
+      '/v',
+      'FenikyaDestek',
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"$exe"',
+      '/f',
+    ]).catchError((_) => ProcessResult(0, 1, '', ''));
+  }
+
+  bool get _unattendedOn => bind.mainGetLocalOption(key: _kUnattended) == 'Y';
+
+  // Ilk giriste bir kez sor.
+  bool _asking = false;
+  Future<void> _maybeAskUnattended() async {
+    if (bind.mainGetLocalOption(key: _kUnattended).isNotEmpty) return;
+    if (!mounted || _asking) return;
+    _asking = true;
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: kInk.withOpacity(.32),
+      builder: (_) => const _UnattendedConsentDialog(),
+    );
+    _asking = false;
+    await _setUnattended(ok == true);
+  }
+
+  Future<void> _setUnattended(bool on) async {
+    await bind.mainSetLocalOption(key: _kUnattended, value: on ? 'Y' : 'N');
+    _accessSynced = false;
+    await _applyAccess();
+    if (mounted) setState(() {});
+  }
+
+  // RustDesk kalici sifresini ayarlar/kaldirir ve panele bildirir.
+  Future<void> _applyAccess() async {
+    final token = _token;
+    final id = gFFI.serverModel.serverId.text.replaceAll(RegExp(r'\s'), '');
+    if (_unattendedOn) {
+      var pw = bind.mainGetLocalOption(key: _kAccessPw);
+      if (pw.isEmpty) {
+        const chars =
+            'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+        final r = Random.secure();
+        pw = List.generate(12, (_) => chars[r.nextInt(chars.length)]).join();
+        await bind.mainSetLocalOption(key: _kAccessPw, value: pw);
+      }
+      await bind.mainSetPermanentPasswordWithResult(password: pw);
+      // Sifre VEYA tiklama ile kabul: sifreyle gelen baglanti onay sormaz.
+      await bind.mainSetOption(
+          key: kOptionVerificationMethod, value: kUseBothPasswords);
+      await bind.mainSetOption(key: kOptionApproveMode, value: '');
+      if (_canSync && id.length >= 6) {
+        _accessSynced = await FenikyaAuthApi.setAccessPassword(token, id, pw);
+      }
+    } else {
+      if (bind.mainGetLocalOption(key: _kAccessPw).isNotEmpty) {
+        await bind.mainSetPermanentPasswordWithResult(password: '');
+        await bind.mainSetLocalOption(key: _kAccessPw, value: '');
+      }
+      if (_canSync && id.length >= 6) {
+        _accessSynced = await FenikyaAuthApi.setAccessPassword(token, id, '');
+      }
+    }
+  }
+
+  // Panele cihaz bildirimi: girisliyse token ile, giris zorunlu degilse anonim.
+  bool get _canSync => _token != null || !_loginRequired;
 
   void _afterAuth() {
     final token = _token;
-    if (token == null) return;
-    FenikyaAuthApi.me(token).then((u) {
-      if (mounted && u != null) setState(() => _user = u);
-    });
+    if (token != null) {
+      FenikyaAuthApi.me(token).then((u) {
+        if (mounted && u != null) setState(() => _user = u);
+      });
+    }
     _sendHeartbeat();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAskUnattended());
     _hbTimer?.cancel();
     _hbTimer =
         Timer.periodic(const Duration(seconds: 90), (_) => _sendHeartbeat());
   }
 
-  void _sendHeartbeat() {
+  Future<void> _sendHeartbeat() async {
     final token = _token;
-    if (token == null) return;
+    if (!_canSync) return;
     final id = gFFI.serverModel.serverId.text.replaceAll(RegExp(r'\s'), '');
     if (id.length < 6) return; // gecerli ID olusana kadar bekle
-    FenikyaAuthApi.heartbeat(token, {
+    final ok = await FenikyaAuthApi.heartbeat(token, {
       'rustdesk_id': id,
       'device_name': Platform.localHostname,
       'os': 'Windows ${Platform.operatingSystemVersion}',
       'app_version': version,
     });
+    // cihaz kaydi olustuktan sonra kalici erisim durumunu (bir kez) esitle
+    if (ok &&
+        !_accessSynced &&
+        bind.mainGetLocalOption(key: _kUnattended).isNotEmpty) {
+      await _applyAccess();
+    }
   }
 
   void _checkUpdate() {
     FenikyaAuthApi.appVersion().then((v) {
       if (!mounted || v == null) return;
+      final required = v['login_required'] != false;
+      bind.mainSetLocalOption(
+          key: 'fenikya-login-required', value: required ? '1' : '0');
+      if (required != _loginRequired) {
+        setState(() => _loginRequired = required);
+        if (_token == null) {
+          if (required) {
+            _hbTimer?.cancel(); // giris ekranina donuluyor
+          } else {
+            _afterAuth(); // girissiz kullanima gecildi
+          }
+        }
+      }
       final latest = (v['latest'] ?? '').toString();
       if (_isNewer(latest, version)) setState(() => _update = v);
     });
@@ -116,6 +228,7 @@ class _FenikyaHomeState extends State<FenikyaHome> {
 
   Future<void> _logout() async {
     _hbTimer?.cancel();
+    _accessSynced = false;
     await bind.mainSetLocalOption(key: 'fenikya-token', value: '');
     if (mounted) {
       setState(() {
@@ -123,6 +236,7 @@ class _FenikyaHomeState extends State<FenikyaHome> {
         _user = null;
       });
     }
+    if (!_loginRequired) _afterAuth(); // girissiz modda anonim devam
   }
 
   @override
@@ -149,8 +263,8 @@ class _FenikyaHomeState extends State<FenikyaHome> {
 
   @override
   Widget build(BuildContext context) {
-    // ZORUNLU GIRIS: token yoksa once giris/kayit ekrani.
-    if (_token == null) {
+    // GIRIS KAPISI: panelde zorunluysa ve token yoksa once giris/kayit ekrani.
+    if (_token == null && _loginRequired) {
       return FenikyaAuthScreen(onAuthed: _onAuthed);
     }
     // Uygulama koyu temada olsa bile bu ekran DAIMA acik (light) tema kullanir;
@@ -345,7 +459,11 @@ class _FenikyaHomeState extends State<FenikyaHome> {
             onTap: () => showDialog(
                 context: context,
                 barrierColor: kInk.withOpacity(.32),
-                builder: (_) => _SettingsDialog(onLogout: _logout, user: _user)),
+                builder: (_) => _SettingsDialog(
+                    onLogout: _token == null ? null : _logout,
+                    user: _user,
+                    unattended: _unattendedOn,
+                    onUnattended: _setUnattended)),
             child: Container(
                 width: 40,
                 height: 40,
@@ -796,12 +914,17 @@ Widget _glass(double maxW, double radius, Widget child) => Container(
 class _SettingsDialog extends StatefulWidget {
   final VoidCallback? onLogout;
   final Map<String, dynamic>? user;
-  const _SettingsDialog({this.onLogout, this.user});
+  final bool unattended;
+  final Future<void> Function(bool)? onUnattended;
+  const _SettingsDialog(
+      {this.onLogout, this.user, this.unattended = false, this.onUnattended});
   @override
   State<_SettingsDialog> createState() => _SettingsDialogState();
 }
 
 class _SettingsDialogState extends State<_SettingsDialog> {
+  late bool _unattended = widget.unattended;
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -864,6 +987,17 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                               fontWeight: FontWeight.w700,
                               fontSize: 13)))),
               _line(),
+              _row(Icons.verified_user_rounded, 'Onaysız destek erişimi',
+                  trailing: Switch(
+                    value: _unattended,
+                    activeColor: kBrand,
+                    onChanged: (v) async {
+                      setState(() => _unattended = v);
+                      await widget.onUnattended?.call(v);
+                    },
+                  )),
+              if (widget.onLogout != null) _line(),
+              if (widget.onLogout != null)
               _row(Icons.logout_rounded, 'Çıkış Yap',
                   onTap: () {
                     Navigator.pop(context);
@@ -998,6 +1132,77 @@ class _SettingsDialogState extends State<_SettingsDialog> {
           ]),
         ),
       ]),
+    );
+  }
+}
+
+// ---------------- KALICI ERISIM ONAYI (ilk giriste bir kez) ----------------
+class _UnattendedConsentDialog extends StatelessWidget {
+  const _UnattendedConsentDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget btn(String t, bool primary, bool value) => Expanded(
+          child: GestureDetector(
+            onTap: () => Navigator.pop(context, value),
+            child: Container(
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                decoration: BoxDecoration(
+                    gradient: primary
+                        ? const LinearGradient(colors: [kBrand, kBlue])
+                        : null,
+                    color: primary ? null : const Color(0xFFEEF4F8),
+                    borderRadius: BorderRadius.circular(12)),
+                child: Text(t,
+                    style: TextStyle(
+                        color: primary ? Colors.white : kInk2,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14))),
+          ),
+        );
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(24),
+      child: Container(
+        width: 440,
+        padding: const EdgeInsets.fromLTRB(26, 26, 26, 22),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                  color: kInk.withOpacity(.30),
+                  blurRadius: 60,
+                  offset: const Offset(0, 22))
+            ]),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  gradient: const LinearGradient(
+                      colors: [Color(0xFFE7F7FA), Color(0xFFDFEEFC)])),
+              child: const Icon(Icons.verified_user_rounded,
+                  color: kBrand, size: 28)),
+          const SizedBox(height: 14),
+          const Text('Onaysız destek erişimi',
+              style: TextStyle(
+                  fontSize: 19, fontWeight: FontWeight.w800, color: kInk)),
+          const SizedBox(height: 10),
+          const Text(
+              'Fenikya destek ekibi, bu uygulama açık olduğu sürece her seferinde onay istemeden bilgisayarınıza bağlanabilsin mi?\n\nBağlantı sırasında ekranda aktif oturum penceresi görünür. Bu izni istediğiniz zaman Ayarlar\'dan kapatabilirsiniz.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: kInk2, fontSize: 13.5, height: 1.5)),
+          const SizedBox(height: 22),
+          Row(children: [
+            btn('Hayır', false, false),
+            const SizedBox(width: 12),
+            btn('İzin Ver', true, true),
+          ]),
+        ]),
+      ),
     );
   }
 }

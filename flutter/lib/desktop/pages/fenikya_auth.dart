@@ -121,11 +121,26 @@ class FenikyaAuthApi {
     return null;
   }
 
-  static Future<void> heartbeat(
-      String token, Map<String, dynamic> device) async {
+  // true = backend cihazi kaydetti
+  static Future<bool> heartbeat(
+      String? token, Map<String, dynamic> device) async {
     try {
-      await _post('/api/devices/heartbeat', device, token: token);
+      final (st, j) = await _post('/api/devices/heartbeat', device, token: token);
+      return st == 200 && j['success'] == true;
     } catch (_) {}
+    return false;
+  }
+
+  // Kalici (onaysiz) erisim sifresini panele bildirir. Bos sifre = kapat.
+  static Future<bool> setAccessPassword(
+      String? token, String rustdeskId, String password) async {
+    try {
+      final (st, j) = await _post('/api/devices/access-password',
+          {'rustdesk_id': rustdeskId, 'password': password},
+          token: token);
+      return st == 200 && j['success'] == true;
+    } catch (_) {}
+    return false;
   }
 }
 
